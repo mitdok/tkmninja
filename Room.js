@@ -1,3 +1,5 @@
+var db = require('./db');
+
 var Room = function () {};
 
 Room.prototype.symbol = null;
@@ -9,6 +11,8 @@ Room.prototype.chatCount = {};
 Room.prototype.redis = null;
 Room.prototype.roomId = null;
 Room.prototype.roomTrip = null;
+Room.prototype.currentGameId = null;
+Room.prototype.restoredFromPostgres = false;
 
 Room.prototype.initialize = function (symbol, roomId, redis) {
   this.symbol = symbol;
@@ -16,6 +20,8 @@ Room.prototype.initialize = function (symbol, roomId, redis) {
   this.owner = null;
   this.isPlaying = false;
   this.chatCount = {};
+  this.currentGameId = null;
+  this.restoredFromPostgres = false;
 
   this.roomId = roomId;
   this.redis = redis;
@@ -118,13 +124,77 @@ Room.prototype.broadcast = function (message, resetWatchDog = true) {
   const msg = {
     isPlaying: this.isPlaying,
     game: JSON.parse(message),
+    savedAt: new Date().toISOString(),
+    currentGameId: this.currentGameId,
   };
   this.saveGame(JSON.stringify(msg));
   this._broadcast("I" + message);
 };
 
-Room.prototype.saveGame = function (game) {
-  this.redis.SET(`room-${this.roomId}`, game);
+Room.prototype.saveGame = async function (game) {
+  var key = `room-${this.roomId}`;
+  try {
+    if (this.redis && this.redis.set) {
+      await this.redis.set(key, game);
+    } else if (this.redis && this.redis.SET) {
+      await this.redis.SET(key, game);
+    }
+  } catch (err) {
+    console.error(`[redis] failed to save ${key}`, err);
+  }
+
+  try {
+    await db.saveRoomState(this.roomId, this.symbol || '?', game, 'broadcast');
+  } catch (err) {
+    console.error(`[pg] failed to save ${key}`, err);
+  }
+};
+
+Room.prototype.restoreSavedGame = async function (applyState) {
+  var key = `room-${this.roomId}`;
+  var prev = null;
+  var source = null;
+
+  try {
+    if (this.redis && this.redis.get) {
+      prev = await this.redis.get(key);
+      source = prev ? 'redis' : null;
+    }
+  } catch (err) {
+    console.error(`[redis] failed to load ${key}`, err);
+  }
+
+  if (!prev) {
+    try {
+      var row = await db.loadRoomState(this.roomId);
+      if (row && row.payload) {
+        prev = typeof row.payload === 'string' ? row.payload : JSON.stringify(row.payload);
+        source = 'postgres';
+      }
+    } catch (err) {
+      console.error(`[pg] failed to load ${key}`, err);
+    }
+  }
+
+  if (!prev) { return false; }
+
+  try {
+    var parsed = JSON.parse(prev);
+    applyState(parsed);
+    if (source === 'postgres') {
+      this.restoredFromPostgres = true;
+      this.chat('?', 'orange', 'Redisの状態が見つからないため、PostgreSQLの保存状態から復帰しました。画面が安定するまで操作を控えてください。');
+      this.saveGame(JSON.stringify(parsed));
+    }
+    return source;
+  } catch (err) {
+    console.error(`[room] failed to restore ${key}`, err);
+    return false;
+  }
+};
+
+Room.prototype.findUserByUid = function (uid) {
+  return this.userList.find((u) => u.uid === uid);
 };
 
 Room.prototype.chat = function (uid, color, message) {
@@ -138,6 +208,8 @@ Room.prototype.chat = function (uid, color, message) {
   if (message.length > 140) {
     message = message.substr(0, 140) + "…";
   }
+  var user = this.findUserByUid(uid);
+  db.logChat(this.roomId, uid, user ? user.trip : null, color, message);
   this._broadcast("H" + uid + " " + color + " " + message);
 };
 
@@ -262,3 +334,45 @@ Room.prototype.basicCommand = function (user, message) {
 };
 
 module.exports = Room;
+
+Room.prototype.buildParticipants = function (playerList, colorNames) {
+  var participants = [];
+  for (var i = 0; i < playerList.length; i++) {
+    if (playerList[i] && playerList[i].uid) {
+      var user = this.findUserByUid(playerList[i].uid);
+      participants.push({
+        seatIndex: i,
+        uid: playerList[i].uid,
+        trip: user ? user.trip : null,
+        colorName: colorNames ? colorNames[i] : null,
+      });
+    }
+  }
+  return participants;
+};
+
+Room.prototype.beginGameLog = async function (snapshot, participants) {
+  try {
+    this.currentGameId = await db.startGameSession(this, JSON.parse(JSON.stringify(snapshot || {})), participants);
+    if (snapshot) {
+      this.saveGame(JSON.stringify({ isPlaying: this.isPlaying, game: JSON.parse(JSON.stringify(snapshot)), savedAt: new Date().toISOString(), currentGameId: this.currentGameId }));
+    }
+  } catch (err) {
+    console.error(`[pg] failed to start game log room-${this.roomId}`, err);
+  }
+};
+
+Room.prototype.finishGameLog = async function (winnerUid, reason, snapshot) {
+  try {
+    var user = this.findUserByUid(winnerUid);
+    await db.finishGameSession(this.currentGameId, {
+      winnerUid: winnerUid,
+      winnerTrip: user ? user.trip : null,
+      reason: reason,
+      snapshot: JSON.parse(JSON.stringify(snapshot || {})),
+    });
+    this.currentGameId = null;
+  } catch (err) {
+    console.error(`[pg] failed to finish game log room-${this.roomId}`, err);
+  }
+};

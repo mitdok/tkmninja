@@ -30,13 +30,15 @@ var Kcataso = function (roomId, redis, isAuth = false) {
     this.isAuth = isAuth;
     this.mt = new MersenneTwister();
     
-    this.redis.get(`room-${this.roomId}`).then(prev => {
-        if (prev) {
-            this.isPlaying = JSON.parse(prev).isPlaying;
-            Game.copy(this.game, JSON.parse(prev).game);
-            Dice.clear(this.dice, this.mt)
-        } else {
-            Game.clear(this.game);
+    this.restoreSavedGame((prev) => {
+        this.isPlaying = !!prev.isPlaying;
+        this.currentGameId = prev.currentGameId || null;
+        Game.copy(this.game, prev.game);
+        Dice.clear(this.dice, this.mt);
+    }).then((source) => {
+        if (!source) { Game.clear(this.game); }
+        if (source === 'postgres') {
+            console.log(`[room-${this.roomId}] restored from PostgreSQL fallback`);
         }
     });
 }
@@ -48,6 +50,7 @@ Kcataso.prototype.split = function (source) {
 }
 
 Kcataso.prototype.reset = function () {
+    if (this.isPlaying) { this.finishGameLog(null, 'reset', this.game); }
     this.isPlaying = false;
 
     Game.clear(this.game);
@@ -175,6 +178,7 @@ Kcataso.prototype.onMessage = function (uid, message) {
                         ) {
                             Game.start(game, mt);
                             Dice.clear(that.dice, mt);
+                            that.beginGameLog(game, that.buildParticipants(playerList, COLOR_NAME));
 
                             var active = game.active;
                             
@@ -857,6 +861,7 @@ Kcataso.prototype.onMessage = function (uid, message) {
                                 var active = game.active;
                                 var playerList = game.playerList;
                                 var activePlayer = playerList[active];
+                                that.finishGameLog(activePlayer.uid, 'victory', game);
 
                                 that.chat(
                                       '?'

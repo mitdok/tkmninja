@@ -1,13 +1,14 @@
 ﻿var WebSocketServer = require("ws").Server;
 var http = require("http");
 var server = http.createServer();
-var crypto = require("crypto");
 var MersenneTwister = require("./MersenneTwister");
 var Cataso = require("./cataso/Cataso");
 var Kcataso = require("./kcataso/Kcataso");
 var BattleRaiso = require("./battleraiso/BattleRaiso");
 var Goipai = require("./goipai/Goipai");
 var Blocas = require("./blocas/Blocas");
+var db = require("./db");
+var tripcode = require("./tripcode");
 
 const redis = require("redis");
 
@@ -22,7 +23,8 @@ const client = redis.createClient({
     rejectUnauthorized: false,
   },
 });
-client.connect();
+client.connect().catch((err) => console.log("Redis connect error =>", err));
+db.init();
 client.on("error", function (err) {
   console.log("Redis error =>", err);
 });
@@ -93,10 +95,11 @@ var roomList = [
   new Blocas(60, client, true), // 60
 ];
 
-var User = function (ws, uid, trip) {
+var User = function (ws, uid, trip, name) {
   this.ws = ws;
   this.uid = uid;
   this.trip = trip;
+  this.name = name || uid;
 };
 
 var splitSyntaxType1 = function (source) {
@@ -128,17 +131,8 @@ var sendUserList = function (index, ws) {
   } catch (e) {}
 };
 
-var createTrip = function (source) {
-  while (source.length < 8) {
-    source += "H";
-  }
+var createTrip = tripcode.createTrip;
 
-  var cipher = crypto.createCipher("des-ecb", source.substr(0, 3));
-  var crypted = cipher.update(source.substr(0, 8), "utf-8", "hex");
-  crypted += cipher.final("hex");
-
-  return crypted.substr(0, 10);
-};
 
 var auth = function (index, trip) {
   if (!roomList[index].isAuth) return true;
@@ -218,8 +212,11 @@ var login = function (index, ws, message) {
 
       sendUserList(index, ws);
 
-      var user = new User(ws, uid, trip);
+      var user = new User(ws, uid, trip, name);
       roomList[index].userList.push(user);
+
+      var ip = user.ws.upgradeReq && user.ws.upgradeReq.headers ? user.ws.upgradeReq.headers["x-forwarded-for"] : null;
+      db.upsertUser({ trip: trip || uid, uid: uid, displayName: name, ip: ip });
 
       if (user.trip !== "") {
         roomList[index]._broadcast("D" + user.uid + "%" + user.trip);
@@ -232,6 +229,10 @@ var login = function (index, ws, message) {
 
       if (roomList[index].owner !== null) {
         ws.send("F" + roomList[index].owner.uid);
+      }
+
+      if (roomList[index].restoredFromPostgres) {
+        ws.send("H? orange PostgreSQLの保存状態から復帰した卓です。状態に違和感があれば管理者に確認してください。");
       }
     } catch (e) {}
   } else {

@@ -7,7 +7,7 @@ var Phase = Const.Phase;
 var Mode = Const.Mode;
 var CARD_COLOR = Const.CARD_COLOR;
 
-var Game = function () { }
+var Game = function () {};
 
 Game.clear = function (game) {
     game.setup = Mode.ADVANCE;
@@ -27,12 +27,13 @@ Game.clear = function (game) {
     game.playLog = [];
     game.log = {};
     game.turn = 1;
+    game.timeout = 0;
 
-    var playerList = game.playerList = [new Player(), new Player()];
+    var playerList = (game.playerList = [new Player(), new Player()]);
 
     Player.clear(playerList[0]);
     Player.clear(playerList[1]);
-}
+};
 Game.copy = function (game, prev) {
     game.setup = prev.setup;
     game.state = prev.state;
@@ -47,16 +48,21 @@ Game.copy = function (game, prev) {
     game.size = prev.size || [];
     game.weather = prev.weather || [];
     game.stock = prev.stock || [];
-    game.before = prev.before || { idx: Index.NONE, x: Index.NONE, y: Index.NONE };
+    game.before = prev.before || {
+        idx: Index.NONE,
+        x: Index.NONE,
+        y: Index.NONE,
+    };
     game.playLog = prev.playLog || [];
     game.log = prev.log || {};
     game.turn = prev.turn || 1;
+    game.timeout = prev.timeout || 0;
 
-    var playerList = game.playerList = [new Player(), new Player()];
+    var playerList = (game.playerList = [new Player(), new Player()]);
 
     Player.copy(playerList[0], prev.playerList[0]);
     Player.copy(playerList[1], prev.playerList[1]);
-}
+};
 
 Game.start = function (game, mt) {
     game.state = State.PLAYING;
@@ -143,11 +149,11 @@ Game.start = function (game, mt) {
     game.log = {
         uid: playerList[0].uid,
         turn: game.turn,
-        beforeHand: playerList[0].hand.map(c => Game.getCardName(c)),
+        beforeHand: playerList[0].hand.map((c) => Game.getCardName(c)),
         afterHand: [],
         flag: [],
-    }
-}
+    };
+};
 
 Game.discard = function (game) {
     var playerList = game.playerList;
@@ -160,38 +166,40 @@ Game.discard = function (game) {
     hand.splice(playing, 1);
 
     game.playing = Index.NONE;
-}
+};
 
 Game.nextTurn = function (game) {
-    game.log.afterHand = game.playerList[game.active].hand.map(c => Game.getCardName(c));
+    game.log.afterHand = game.playerList[game.active].hand.map((c) => Game.getCardName(c));
     var dt = new Date();
     var y = dt.getFullYear();
-    var m = String(dt.getMonth()+1).padStart(2, '0');
+    var m = String(dt.getMonth() + 1).padStart(2, '0');
     var d = String(dt.getDate()).padStart(2, '0');
     var result = y + m + d;
     game.log.meta = {
         date: result,
         player1: game.playerList[0].uid,
-        player2: game.playerList[1].uid
-    }
+        player2: game.playerList[1].uid,
+    };
     game.playLog.push(game.log);
     game.active = game.active === 0 ? 1 : 0;
     game.log = {
         turn: ++game.turn,
         uid: game.playerList[game.active].uid,
-        beforeHand: game.playerList[game.active].hand.map(c => Game.getCardName(c)),
+        beforeHand: game.playerList[game.active].hand.map((c) => Game.getCardName(c)),
         afterHand: [],
-        flag: []
+        flag: [],
     };
     game.phase = Phase.STARTUP;
     game.playing = Index.NONE;
-}
+};
 
 Game.isFinish = function (game) {
     var active = game.active;
     var flagList = game.flagList;
 
-    var i, sequence = 0, count = 0;
+    var i,
+        sequence = 0,
+        count = 0;
     var len1 = flagList.length;
     for (i = 0; i < len1; i++) {
         if (flagList[i] === active) {
@@ -206,20 +214,20 @@ Game.isFinish = function (game) {
     }
 
     return false;
-}
+};
 
 Game.getCardName = function (card) {
     var color = (card & 0xff00) >> 8;
     var number = (card & 0x00ff) + 1;
-    if(color < 6) {
+    if (color < 6) {
         return CARD_COLOR[color] + number;
     }
 
-    switch(card) {
+    switch (card) {
         case Tactics.ALEXANDER:
-        case Tactics.DARIUS :
+        case Tactics.DARIUS:
             return '隊長';
-        case Tactics.COMPANION :
+        case Tactics.COMPANION:
             return '援軍';
         case Tactics.SHIELD:
             return '盾';
@@ -236,6 +244,6 @@ Game.getCardName = function (card) {
         case Tactics.TRAITOR:
             return '裏切り';
     }
-}
+};
 
 module.exports = Game;
