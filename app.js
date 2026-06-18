@@ -406,7 +406,10 @@ wss.on("connection", function (ws) {
   });
 });
 
-server.listen(process.env.PORT || 5000);
+const port = process.env.PORT || 5000;
+server.listen(port, "0.0.0.0", () => {
+  console.log(`Server listening on ${port}`);
+});
 
 process.on("uncaughtException", function (e) {
   console.log("uncaughtException =>", e);
