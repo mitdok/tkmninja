@@ -1,6 +1,9 @@
 ﻿var WebSocketServer = require("ws").Server;
 var http = require("http");
-var server = http.createServer();
+var server = http.createServer(function (req, res) {
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end("tkmninja websocket server is running\n");
+});
 var MersenneTwister = require("./MersenneTwister");
 var Cataso = require("./cataso/Cataso");
 var Kcataso = require("./kcataso/Kcataso");
